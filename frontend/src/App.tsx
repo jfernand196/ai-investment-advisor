@@ -21,12 +21,15 @@ import {
   type FxQuote,
   type Recommendation,
 } from './lib/api'
-
-const bucketLabel: Record<string, string> = {
-  conservative: 'Conservador',
-  moderate: 'Moderado',
-  aggressive: 'Agresivo',
-}
+import { useLanguage } from './i18n/LanguageProvider'
+import type { Locale, TranslationKey } from './i18n/translations'
+import {
+  actionLabel,
+  formatPctRatio,
+  humanThesis,
+  parseThesisMetrics,
+  reasonLabel,
+} from './lib/recommendationCopy'
 
 const actionTone: Record<string, string> = {
   BUY: 'text-[var(--positive)]',
@@ -56,12 +59,22 @@ function latestBySymbol(recs: Recommendation[]) {
   return Array.from(map.values()).sort((a, b) => a.symbol.localeCompare(b.symbol))
 }
 
+function bucketKey(bucket: string): TranslationKey {
+  if (bucket === 'conservative') return 'bucketConservative'
+  if (bucket === 'moderate') return 'bucketModerate'
+  return 'bucketAggressive'
+}
+
 function App() {
   const queryClient = useQueryClient()
+  const { locale, setLocale, t, dateLocale } = useLanguage()
 
   const healthQuery = useQuery({ queryKey: ['health'], queryFn: fetchLiveHealth, retry: 1 })
   const configQuery = useQuery({ queryKey: ['config'], queryFn: fetchPublicConfig, retry: 1 })
-  const recsQuery = useQuery({ queryKey: ['recommendations'], queryFn: () => fetchRecommendations(false) })
+  const recsQuery = useQuery({
+    queryKey: ['recommendations'],
+    queryFn: () => fetchRecommendations(false),
+  })
   const marketQuery = useQuery({
     queryKey: ['market'],
     queryFn: fetchMarketOverview,
@@ -109,6 +122,13 @@ function App() {
   })
 
   const apiUp = healthQuery.data?.status === 'ok'
+  const latestEmailStatus = notificationsQuery.data?.[0]?.status
+  const emailTone =
+    latestEmailStatus === 'failed' || latestEmailStatus === 'error'
+      ? 'text-[var(--danger)]'
+      : latestEmailStatus === 'sent' || latestEmailStatus === 'delivered'
+        ? 'text-[var(--positive)]'
+        : 'text-[var(--muted)]'
   const latestRecs = latestBySymbol(recsQuery.data ?? [])
   const actionable = latestRecs.filter((r) => r.action !== 'HOLD')
   const chartData =
@@ -125,56 +145,90 @@ function App() {
     <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-6 py-10">
       <header className="flex flex-col gap-4 border-b border-[var(--border)] pb-6 md:flex-row md:items-end md:justify-between">
         <div className="flex flex-col gap-3">
-          <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">
-            Personal Advisory
-          </p>
+          <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">{t('eyebrow')}</p>
           <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">
             AI Investment Advisor
           </h1>
           <p className="text-sm tracking-wide text-[var(--muted)]">
-            por <span className="text-[var(--text)]">Juan Fernando Buitrago</span>
+            {t('authoredBy')} <span className="text-[var(--text)]">Juan Fernando Buitrago</span>
           </p>
-          <p className="max-w-2xl text-[var(--muted)]">
-            Recomendaciones diarias sobre ETFs US, con contexto USD/COP y guardrails de riesgo.
-          </p>
+          <p className="max-w-2xl text-[var(--muted)]">{t('tagline')}</p>
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <span
               className={`rounded-full border border-[var(--border)] px-3 py-1 ${
                 apiUp ? 'text-[var(--positive)]' : 'text-[var(--danger)]'
               }`}
             >
-              API: {apiUp ? 'online' : healthQuery.isLoading ? 'checking…' : 'offline'}
+              API:{' '}
+              {apiUp
+                ? t('apiOnline')
+                : healthQuery.isLoading
+                  ? t('apiChecking')
+                  : t('apiOffline')}
             </span>
-            <span className="rounded-full border border-[var(--border)] px-3 py-1 text-[var(--muted)]">
-              Email: {notificationsQuery.data?.[0]?.status ?? 'sin envíos'}
+            <span
+              className={`rounded-full border border-[var(--border)] px-3 py-1 ${emailTone}`}
+            >
+              {t('emailPrefix')}: {latestEmailStatus ?? t('emailNone')}
             </span>
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            disabled={ingestMutation.isPending || !apiUp}
-            onClick={() => ingestMutation.mutate()}
-            className="rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-medium text-[var(--text)] transition disabled:opacity-50"
+        <div className="flex flex-col items-stretch gap-3 sm:items-end">
+          <div
+            className="inline-flex self-start rounded-lg border border-[var(--border)] p-0.5 sm:self-end"
+            role="group"
+            aria-label={t('language')}
           >
-            {ingestMutation.isPending ? 'Actualizando FX…' : 'Actualizar mercado'}
-          </button>
-          <button
-            type="button"
-            disabled={runMutation.isPending || !apiUp}
-            onClick={() => runMutation.mutate()}
-            className="rounded-lg bg-[var(--accent)] px-4 py-2.5 text-sm font-medium text-white transition disabled:opacity-50"
-          >
-            {runMutation.isPending ? 'Ejecutando…' : 'Correr advisory ahora'}
-          </button>
+            <button
+              type="button"
+              onClick={() => setLocale('es')}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium tracking-wide transition ${
+                locale === 'es'
+                  ? 'bg-[var(--accent)] text-white'
+                  : 'text-[var(--muted)] hover:text-[var(--text)]'
+              }`}
+            >
+              {t('langEs')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setLocale('en')}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium tracking-wide transition ${
+                locale === 'en'
+                  ? 'bg-[var(--accent)] text-white'
+                  : 'text-[var(--muted)] hover:text-[var(--text)]'
+              }`}
+            >
+              {t('langEn')}
+            </button>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={ingestMutation.isPending || !apiUp}
+              onClick={() => ingestMutation.mutate()}
+              className="rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-medium text-[var(--text)] transition disabled:opacity-50"
+            >
+              {ingestMutation.isPending ? t('updatingMarket') : t('updateMarket')}
+            </button>
+            <button
+              type="button"
+              disabled={runMutation.isPending || !apiUp}
+              onClick={() => runMutation.mutate()}
+              className="rounded-lg bg-[var(--accent)] px-4 py-2.5 text-sm font-medium text-white transition disabled:opacity-50"
+            >
+              {runMutation.isPending ? t('runningAdvisory') : t('runAdvisory')}
+            </button>
+          </div>
         </div>
       </header>
 
       {runMutation.isSuccess && (
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-3 text-sm">
-          Run #{runMutation.data.run_id} · {runMutation.data.actionable_count} acciones · email:{' '}
-          {runMutation.data.email_status ?? 'n/a'}
+          Run #{runMutation.data.run_id} · {runMutation.data.actionable_count}{' '}
+          {t('runResultActions')} · email: {runMutation.data.email_status ?? 'n/a'}
         </div>
       )}
       {runMutation.isError && (
@@ -186,30 +240,30 @@ function App() {
       <main className="grid gap-6">
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <Stat
-            label="Capital perfil"
+            label={t('capitalProfile')}
             value={
               configQuery.data
                 ? money(configQuery.data.available_capital_usd)
                 : '—'
             }
           />
-          <Stat label="Cash portafolio" value={money(portfolioQuery.data?.cash_usd)} />
+          <Stat label={t('portfolioCash')} value={money(portfolioQuery.data?.cash_usd)} />
           <Stat
-            label="USD/COP mercado"
+            label={t('usdCopSpot')}
             value={formatRate(spotQuote?.rate)}
             hint={
               spotQuote
-                ? `${spotQuote.source} · ${new Date(spotQuote.ts).toLocaleString('es-CO')}`
-                : 'Google Finance spot'
+                ? `${spotQuote.source} · ${new Date(spotQuote.ts).toLocaleString(dateLocale)}`
+                : t('googleSpotHint')
             }
           />
           <Stat
-            label="USD/COP TRM"
+            label={t('usdCopTrm')}
             value={formatRate(trmQuote?.rate)}
             hint={
               trmQuote
-                ? `${trmQuote.source} · ${new Date(trmQuote.ts).toLocaleDateString('es-CO')}`
-                : 'Sin TRM — pulsa Actualizar mercado'
+                ? `${trmQuote.source} · ${new Date(trmQuote.ts).toLocaleDateString(dateLocale)}`
+                : t('noTrmHint')
             }
           />
           <Stat
@@ -228,52 +282,46 @@ function App() {
           <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-5">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-lg font-medium">Recomendaciones</h2>
+                <h2 className="text-lg font-medium">{t('recommendations')}</h2>
                 <p className="text-sm text-[var(--muted)]">
-                  Última señal por ETF · {actionable.length} accionables
+                  {t('recommendationsSubtitle')} · {actionable.length} {t('actionable')}
                 </p>
               </div>
             </div>
 
-            {recsQuery.isLoading && <p className="text-[var(--muted)]">Cargando…</p>}
+            {recsQuery.isLoading && <p className="text-[var(--muted)]">{t('loading')}</p>}
             {recsQuery.isError && (
-              <p className="text-[var(--danger)]">No se pudieron cargar recomendaciones.</p>
+              <p className="text-[var(--danger)]">{t('recommendationsError')}</p>
             )}
+
+            {!recsQuery.isLoading &&
+              latestRecs.length > 0 &&
+              actionable.length === 0 && (
+                <p className="mb-4 rounded-lg border border-[var(--border)] bg-black/15 px-3 py-2 text-sm text-[var(--muted)]">
+                  {t('allHoldSummary')}
+                </p>
+              )}
 
             <ul className="divide-y divide-[var(--border)]">
               {latestRecs.map((rec) => (
-                <li key={rec.id} className="py-3">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="font-medium tracking-wide">
-                        {rec.symbol}{' '}
-                        <span className={`text-sm ${actionTone[rec.action] ?? ''}`}>
-                          {rec.action}
-                        </span>
-                      </p>
-                      <p className="mt-1 max-w-xl text-sm text-[var(--muted)]">
-                        {rec.explanation?.thesis ?? 'Sin explicación'}
-                      </p>
-                    </div>
-                    <div className="text-right text-sm text-[var(--muted)]">
-                      <p>{Number(rec.size_pct ?? 0).toFixed(2)}%</p>
-                      <p>{money(rec.size_amount_usd)}</p>
-                    </div>
-                  </div>
-                </li>
+                <RecommendationRow
+                  key={rec.id}
+                  rec={rec}
+                  locale={locale}
+                  t={t}
+                  showSize={rec.action !== 'HOLD'}
+                />
               ))}
               {!recsQuery.isLoading && latestRecs.length === 0 && (
-                <li className="py-6 text-sm text-[var(--muted)]">
-                  Aún no hay runs. Pulsa “Correr advisory ahora”.
-                </li>
+                <li className="py-6 text-sm text-[var(--muted)]">{t('noRuns')}</li>
               )}
             </ul>
           </div>
 
           <div className="grid gap-6">
             <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-5">
-              <h2 className="text-lg font-medium">Retorno 20d</h2>
-              <p className="mb-4 text-sm text-[var(--muted)]">Features de mercado v1</p>
+              <h2 className="text-lg font-medium">{t('return20d')}</h2>
+              <p className="mb-4 text-sm text-[var(--muted)]">{t('marketFeatures')}</p>
               <div className="h-56">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartData}>
@@ -294,11 +342,11 @@ function App() {
             </div>
 
             <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-5">
-              <h2 className="text-lg font-medium">Email reciente</h2>
+              <h2 className="text-lg font-medium">{t('recentEmail')}</h2>
               {notificationsQuery.data?.[0] ? (
                 <div className="mt-3 space-y-2 text-sm">
                   <p>
-                    Estado:{' '}
+                    {t('status')}:{' '}
                     <span className="text-[var(--accent)]">
                       {notificationsQuery.data[0].status}
                     </span>
@@ -314,10 +362,7 @@ function App() {
                   </pre>
                 </div>
               ) : (
-                <p className="mt-3 text-sm text-[var(--muted)]">
-                  Sin notificaciones. Configura Gmail en `.env` para envío real; sin credenciales el
-                  sistema guarda el email como <code>skipped</code>.
-                </p>
+                <p className="mt-3 text-sm text-[var(--muted)]">{t('noNotifications')}</p>
               )}
             </div>
           </div>
@@ -325,11 +370,11 @@ function App() {
 
         {configQuery.data && (
           <section className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-5">
-            <h2 className="text-lg font-medium">Universo y caps</h2>
+            <h2 className="text-lg font-medium">{t('universeTitle')}</h2>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              Targets {configQuery.data.allocation_targets.conservative_pct}/
+              {t('targets')} {configQuery.data.allocation_targets.conservative_pct}/
               {configQuery.data.allocation_targets.moderate_pct}/
-              {configQuery.data.allocation_targets.aggressive_pct} · perfil{' '}
+              {configQuery.data.allocation_targets.aggressive_pct} · {t('profile')}{' '}
               {configQuery.data.risk_profile}
             </p>
             <ul className="mt-4 grid gap-2 sm:grid-cols-3">
@@ -341,10 +386,12 @@ function App() {
                   <span>
                     {etf.symbol}
                     <span className="ml-2 text-xs text-[var(--muted)]">
-                      {bucketLabel[etf.bucket]}
+                      {t(bucketKey(etf.bucket))}
                     </span>
                   </span>
-                  <span className="text-[var(--muted)]">max {etf.max_allocation_pct}%</span>
+                  <span className="text-[var(--muted)]">
+                    {t('max')} {etf.max_allocation_pct}%
+                  </span>
                 </li>
               ))}
             </ul>
@@ -370,6 +417,123 @@ function Stat({
       <p className="mt-2 text-xl font-semibold">{value}</p>
       {hint ? <p className="mt-1 text-xs text-[var(--muted)]">{hint}</p> : null}
     </div>
+  )
+}
+
+function MetricChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="rounded-md border border-[var(--border)] px-2 py-1 text-xs text-[var(--muted)]">
+      <span className="text-[var(--text)]/70">{label}</span> {value}
+    </span>
+  )
+}
+
+function RecommendationRow({
+  rec,
+  locale,
+  t,
+  showSize,
+}: {
+  rec: Recommendation
+  locale: Locale
+  t: (key: TranslationKey) => string
+  showSize: boolean
+}) {
+  const metrics = parseThesisMetrics(rec.explanation?.thesis)
+  const summary = humanThesis(rec, locale)
+  const reasons = metrics.reasonKeys
+    .map((key) => reasonLabel(key, locale))
+    .filter((label): label is string => Boolean(label))
+  const returnLabel = formatPctRatio(metrics.return20d)
+  const volLabel = formatPctRatio(metrics.vol20d)
+  const confidence =
+    rec.confidence === null || rec.confidence === undefined
+      ? null
+      : `${(Number(rec.confidence) * 100).toFixed(0)}%`
+
+  const chips: Array<{ label: string; value: string }> = []
+  if (metrics.score !== undefined) {
+    chips.push({ label: t('metricScore'), value: metrics.score.toFixed(3) })
+  }
+  if (metrics.weightPct !== undefined) {
+    chips.push({ label: t('metricWeight'), value: `${metrics.weightPct.toFixed(1)}%` })
+  }
+  if (metrics.capPct !== undefined) {
+    chips.push({ label: t('metricCap'), value: `${metrics.capPct.toFixed(0)}%` })
+  }
+  if (returnLabel) chips.push({ label: t('metricReturn20d'), value: returnLabel })
+  if (volLabel) chips.push({ label: t('metricVol20d'), value: volLabel })
+  if (confidence) chips.push({ label: t('metricConfidence'), value: confidence })
+
+  const hasDetails =
+    Boolean(rec.explanation?.risks) ||
+    Boolean(rec.explanation?.invalidation) ||
+    Boolean(rec.explanation?.thesis)
+
+  return (
+    <li className="py-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="font-medium tracking-wide">
+            {rec.symbol}{' '}
+            <span className={`text-sm ${actionTone[rec.action] ?? ''}`}>
+              {actionLabel(rec.action, locale)}
+            </span>
+          </p>
+          <p className="mt-1 max-w-xl text-sm leading-relaxed text-[var(--text)]/85">
+            {summary || t('noExplanation')}
+          </p>
+          {reasons.length > 0 && (
+            <p className="mt-1 text-xs text-[var(--muted)]">{reasons.join(' · ')}</p>
+          )}
+          {chips.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {chips.map((chip) => (
+                <MetricChip key={chip.label} label={chip.label} value={chip.value} />
+              ))}
+            </div>
+          )}
+          {hasDetails && (
+            <details className="mt-2 group">
+              <summary className="cursor-pointer list-none text-xs text-[var(--muted)] underline-offset-2 hover:text-[var(--text)] hover:underline [&::-webkit-details-marker]:hidden">
+                <span className="group-open:hidden">{t('showDetails')}</span>
+                <span className="hidden group-open:inline">{t('hideDetails')}</span>
+              </summary>
+              <div className="mt-2 space-y-2 rounded-lg border border-[var(--border)] bg-black/15 p-3 text-xs text-[var(--muted)]">
+                {rec.explanation?.risks && (
+                  <p>
+                    <span className="text-[var(--text)]/70">{t('risksLabel')}: </span>
+                    {rec.explanation.risks}
+                  </p>
+                )}
+                {rec.explanation?.invalidation && (
+                  <p>
+                    <span className="text-[var(--text)]/70">{t('invalidationLabel')}: </span>
+                    {rec.explanation.invalidation}
+                  </p>
+                )}
+                {rec.explanation?.thesis && (
+                  <p className="whitespace-pre-wrap break-words">
+                    <span className="text-[var(--text)]/70">{t('rawThesisLabel')}: </span>
+                    {rec.explanation.thesis}
+                  </p>
+                )}
+              </div>
+            </details>
+          )}
+        </div>
+        <div className="text-right text-sm text-[var(--muted)]">
+          {showSize ? (
+            <>
+              <p className="text-[var(--text)]">{Number(rec.size_pct ?? 0).toFixed(2)}%</p>
+              <p>{money(rec.size_amount_usd)}</p>
+            </>
+          ) : (
+            <p className="text-xs uppercase tracking-[0.12em]">—</p>
+          )}
+        </div>
+      </div>
+    </li>
   )
 }
 
