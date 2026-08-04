@@ -102,12 +102,14 @@ def load_advisory_context(db: Session, settings: Settings) -> AdvisoryContext:
         price_closes[symbol] = [float(b.close) for b in bars]
 
     fx_features: Dict[str, Dict[str, Any]] = {}
-    for pair in ("USDCOP", "DXY"):
+    for pair in ("USDCOP", "USDCOP_SPOT", "USDCOP_TRM", "DXY"):
         feat = repo.latest_feature(pair)
         if feat:
             fx_features[pair] = {**(feat.payload or {}), "as_of": feat.ts.isoformat()}
         else:
-            warnings.append(f"missing_features:{pair}")
+            # Spot/TRM may be sparse; don't hard-warn for missing historical Yahoo only once.
+            if pair in {"USDCOP", "DXY"}:
+                warnings.append(f"missing_features:{pair}")
 
     macro_latest: Dict[str, Any] = {}
     for series_id in DEFAULT_SERIES:

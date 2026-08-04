@@ -65,8 +65,12 @@ def market_overview(
         if point:
             macro_latest.append(point)
 
+    spot = repo.latest_fx("USDCOP_SPOT") or repo.latest_fx("USDCOP")
+    trm = repo.latest_fx("USDCOP_TRM")
     return MarketOverviewOut(
-        usdcop=repo.latest_fx("USDCOP"),
+        usdcop_spot=spot,
+        usdcop_trm=trm,
+        usdcop=spot,
         dxy=repo.latest_fx("DXY"),
         etf_latest_features=etf_features,
         macro_latest=macro_latest,
@@ -95,10 +99,13 @@ def fx_history(
     db: Session = Depends(get_db),
 ) -> list:
     pair_u = pair.upper()
-    if pair_u not in {"USDCOP", "DXY"}:
-        raise HTTPException(status_code=404, detail="Supported pairs: USDCOP, DXY")
-    rows = MarketRepository(db).list_fx(pair_u, limit=limit)
-    return list(reversed(rows))
+    if pair_u not in {"USDCOP", "USDCOP_SPOT", "USDCOP_TRM", "DXY"}:
+        raise HTTPException(
+            status_code=404,
+            detail="Supported pairs: USDCOP, USDCOP_SPOT, USDCOP_TRM, DXY",
+        )
+    # Newest first so clients can take index 0 as latest quote.
+    return MarketRepository(db).list_fx(pair_u, limit=limit)
 
 
 @router.get("/features/{entity}", response_model=FeatureOut)
