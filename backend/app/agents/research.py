@@ -117,30 +117,46 @@ def run_technical_agent(ctx: AdvisoryContext) -> AgentResult:
 
 def run_dollar_agent(ctx: AdvisoryContext) -> AgentResult:
     def _run() -> AgentResult:
+        # Prefer Yahoo daily series for momentum; enrich with Google spot + official TRM.
         feat = ctx.fx_features.get("USDCOP", {})
+        spot = ctx.fx_features.get("USDCOP_SPOT", {})
+        trm = ctx.fx_features.get("USDCOP_TRM", {})
         r20 = feat.get("return_20d")
-        rate = feat.get("rate")
+        rate = spot.get("rate") or feat.get("rate")
+        trm_rate = trm.get("rate")
         bias = "neutral"
         score = 0.0
         if r20 is not None:
             # USDCOP up => USD stronger vs COP
             score = max(min(float(r20) * 3, 1.0), -1.0)
             bias = "usd_strong" if score > 0.05 else "cop_strong" if score < -0.05 else "neutral"
+        has_any = bool(feat or spot or trm)
         return AgentResult(
             agent_name="dollar",
-            confidence=0.7 if feat else 0.2,
-            signals=[{"pair": "USDCOP", "bias": bias, "score": round(score, 4), "rate": rate}],
+            confidence=0.75 if has_any else 0.2,
+            signals=[
+                {
+                    "pair": "USDCOP",
+                    "bias": bias,
+                    "score": round(score, 4),
+                    "spot_rate": rate,
+                    "trm_rate": trm_rate,
+                }
+            ],
             evidence=[
                 EvidenceItem(
                     source="fx_rates",
                     ref_id="fx:USDCOP",
-                    summary=f"USDCOP rate={rate} r20={r20} bias={bias}",
+                    summary=(
+                        f"spot={rate} ({spot.get('source', 'n/a')}) "
+                        f"trm={trm_rate} r20={r20} bias={bias}"
+                    ),
                 )
             ]
-            if feat
+            if has_any
             else [],
-            payload=feat,
-            warnings=[] if feat else ["missing_USDCOP"],
+            payload={"series": feat, "spot": spot, "trm": trm},
+            warnings=[] if has_any else ["missing_USDCOP"],
         )
 
     return _timed("dollar", _run)

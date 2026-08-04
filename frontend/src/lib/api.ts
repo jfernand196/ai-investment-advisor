@@ -60,9 +60,18 @@ export type Recommendation = {
   } | null
 }
 
+export type FxQuote = {
+  pair: string
+  ts: string
+  rate: string | number
+  source: string
+}
+
 export type MarketOverview = {
-  usdcop: { pair: string; ts: string; rate: string | number; source: string } | null
-  dxy: { pair: string; ts: string; rate: string | number; source: string } | null
+  usdcop_spot: FxQuote | null
+  usdcop_trm: FxQuote | null
+  usdcop: FxQuote | null
+  dxy: FxQuote | null
   etf_latest_features: Array<{
     entity: string
     feature_set_version: string
@@ -122,6 +131,21 @@ export const fetchRecommendations = (actionableOnly = false) =>
 export const fetchMarketOverview = () => getJson<MarketOverview>('/market/overview')
 export const fetchPortfolio = () => getJson<Portfolio>('/portfolios/primary')
 export const fetchNotifications = () => getJson<NotificationItem[]>('/notifications?limit=10')
+export const fetchFxHistory = (pair: string, limit = 1) =>
+  getJson<FxQuote[]>(`/market/fx/${pair}?limit=${limit}`)
+
+export async function triggerMarketIngest(lookbackDays = 60): Promise<unknown> {
+  const response = await fetch(`${API_PREFIX}/market/ingest`, {
+    method: 'POST',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ lookback_days: lookbackDays }),
+  })
+  if (!response.ok) {
+    const detail = await response.text()
+    throw new Error(detail || `Market ingest failed (${response.status})`)
+  }
+  return response.json()
+}
 
 export async function triggerAdvisoryRun(notifyEmail = true): Promise<AdvisoryRunSummary> {
   const response = await fetch(`${API_PREFIX}/advisory/runs`, {

@@ -63,6 +63,9 @@ class FeatureOut(BaseModel):
 
 
 class MarketOverviewOut(BaseModel):
+    usdcop_spot: Optional[FxRateOut] = None
+    usdcop_trm: Optional[FxRateOut] = None
+    # Backward-compatible alias for spot
     usdcop: Optional[FxRateOut] = None
     dxy: Optional[FxRateOut] = None
     etf_latest_features: List[FeatureOut]

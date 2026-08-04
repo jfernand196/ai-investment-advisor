@@ -9,6 +9,7 @@ import {
   YAxis,
 } from 'recharts'
 import {
+  fetchFxHistory,
   fetchLiveHealth,
   fetchMarketOverview,
   fetchNotifications,
@@ -16,6 +17,8 @@ import {
   fetchPublicConfig,
   fetchRecommendations,
   triggerAdvisoryRun,
+  triggerMarketIngest,
+  type FxQuote,
   type Recommendation,
 } from './lib/api'
 
@@ -38,6 +41,13 @@ function money(value: number | string | null | undefined) {
   return `$${Number(value).toLocaleString('en-US', { maximumFractionDigits: 2 })}`
 }
 
+function formatRate(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === '') return '—'
+  const n = Number(value)
+  if (Number.isNaN(n)) return '—'
+  return n.toLocaleString('en-US', { maximumFractionDigits: 2 })
+}
+
 function latestBySymbol(recs: Recommendation[]) {
   const map = new Map<string, Recommendation>()
   for (const rec of recs) {
@@ -52,7 +62,27 @@ function App() {
   const healthQuery = useQuery({ queryKey: ['health'], queryFn: fetchLiveHealth, retry: 1 })
   const configQuery = useQuery({ queryKey: ['config'], queryFn: fetchPublicConfig, retry: 1 })
   const recsQuery = useQuery({ queryKey: ['recommendations'], queryFn: () => fetchRecommendations(false) })
-  const marketQuery = useQuery({ queryKey: ['market'], queryFn: fetchMarketOverview })
+  const marketQuery = useQuery({
+    queryKey: ['market'],
+    queryFn: fetchMarketOverview,
+    refetchOnMount: 'always',
+  })
+  const trmQuery = useQuery({
+    queryKey: ['fx', 'USDCOP_TRM'],
+    queryFn: async () => {
+      const rows = await fetchFxHistory('USDCOP_TRM', 1)
+      return rows[0] ?? null
+    },
+    refetchOnMount: 'always',
+  })
+  const spotQuery = useQuery({
+    queryKey: ['fx', 'USDCOP_SPOT'],
+    queryFn: async () => {
+      const rows = await fetchFxHistory('USDCOP_SPOT', 1)
+      return rows[0] ?? null
+    },
+    refetchOnMount: 'always',
+  })
   const portfolioQuery = useQuery({ queryKey: ['portfolio'], queryFn: fetchPortfolio })
   const notificationsQuery = useQuery({ queryKey: ['notifications'], queryFn: fetchNotifications })
 
@@ -63,6 +93,17 @@ function App() {
         queryClient.invalidateQueries({ queryKey: ['recommendations'] }),
         queryClient.invalidateQueries({ queryKey: ['notifications'] }),
         queryClient.invalidateQueries({ queryKey: ['market'] }),
+        queryClient.invalidateQueries({ queryKey: ['fx'] }),
+      ])
+    },
+  })
+
+  const ingestMutation = useMutation({
+    mutationFn: () => triggerMarketIngest(60),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['market'] }),
+        queryClient.invalidateQueries({ queryKey: ['fx'] }),
       ])
     },
   })
@@ -75,6 +116,10 @@ function App() {
       symbol: f.entity,
       return20d: Number(((f.payload.return_20d ?? 0) * 100).toFixed(2)),
     })) ?? []
+
+  const spotQuote: FxQuote | null =
+    marketQuery.data?.usdcop_spot ?? marketQuery.data?.usdcop ?? spotQuery.data ?? null
+  const trmQuote: FxQuote | null = marketQuery.data?.usdcop_trm ?? trmQuery.data ?? null
 
   return (
     <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-6 py-10">
@@ -103,14 +148,24 @@ function App() {
           </div>
         </div>
 
-        <button
-          type="button"
-          disabled={runMutation.isPending || !apiUp}
-          onClick={() => runMutation.mutate()}
-          className="rounded-lg bg-[var(--accent)] px-4 py-2.5 text-sm font-medium text-white transition disabled:opacity-50"
-        >
-          {runMutation.isPending ? 'Ejecutando…' : 'Correr advisory ahora'}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={ingestMutation.isPending || !apiUp}
+            onClick={() => ingestMutation.mutate()}
+            className="rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-medium text-[var(--text)] transition disabled:opacity-50"
+          >
+            {ingestMutation.isPending ? 'Actualizando FX…' : 'Actualizar mercado'}
+          </button>
+          <button
+            type="button"
+            disabled={runMutation.isPending || !apiUp}
+            onClick={() => runMutation.mutate()}
+            className="rounded-lg bg-[var(--accent)] px-4 py-2.5 text-sm font-medium text-white transition disabled:opacity-50"
+          >
+            {runMutation.isPending ? 'Ejecutando…' : 'Correr advisory ahora'}
+          </button>
+        </div>
       </header>
 
       {runMutation.isSuccess && (
@@ -126,7 +181,7 @@ function App() {
       )}
 
       <main className="grid gap-6">
-        <section className="grid gap-4 md:grid-cols-4">
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <Stat
             label="Capital perfil"
             value={
@@ -137,13 +192,21 @@ function App() {
           />
           <Stat label="Cash portafolio" value={money(portfolioQuery.data?.cash_usd)} />
           <Stat
-            label="USD/COP"
-            value={
-              marketQuery.data?.usdcop
-                ? Number(marketQuery.data.usdcop.rate).toLocaleString('en-US', {
-                    maximumFractionDigits: 2,
-                  })
-                : '—'
+            label="USD/COP mercado"
+            value={formatRate(spotQuote?.rate)}
+            hint={
+              spotQuote
+                ? `${spotQuote.source} · ${new Date(spotQuote.ts).toLocaleString('es-CO')}`
+                : 'Google Finance spot'
+            }
+          />
+          <Stat
+            label="USD/COP TRM"
+            value={formatRate(trmQuote?.rate)}
+            hint={
+              trmQuote
+                ? `${trmQuote.source} · ${new Date(trmQuote.ts).toLocaleDateString('es-CO')}`
+                : 'Sin TRM — pulsa Actualizar mercado'
             }
           />
           <Stat
@@ -289,11 +352,20 @@ function App() {
   )
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({
+  label,
+  value,
+  hint,
+}: {
+  label: string
+  value: string
+  hint?: string
+}) {
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-5">
       <p className="text-xs uppercase tracking-[0.16em] text-[var(--muted)]">{label}</p>
       <p className="mt-2 text-xl font-semibold">{value}</p>
+      {hint ? <p className="mt-1 text-xs text-[var(--muted)]">{hint}</p> : null}
     </div>
   )
 }
