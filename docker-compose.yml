@@ -1,0 +1,37 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: aia-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: advisor
+      POSTGRES_PASSWORD: advisor
+      POSTGRES_DB: ai_investment_advisor
+    ports:
+      # Host 5433 avoids clash with a local Postgres already on 5432
+      - "5433:5432"
+    volumes:
+      - ./.docker-data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U advisor -d ai_investment_advisor"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aia-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://advisor:advisor@db:5432/ai_investment_advisor
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - full
