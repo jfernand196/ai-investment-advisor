@@ -22,7 +22,14 @@ import {
   type Recommendation,
 } from './lib/api'
 import { useLanguage } from './i18n/LanguageProvider'
-import type { TranslationKey } from './i18n/translations'
+import type { Locale, TranslationKey } from './i18n/translations'
+import {
+  actionLabel,
+  formatPctRatio,
+  humanThesis,
+  parseThesisMetrics,
+  reasonLabel,
+} from './lib/recommendationCopy'
 
 const actionTone: Record<string, string> = {
   BUY: 'text-[var(--positive)]',
@@ -115,6 +122,13 @@ function App() {
   })
 
   const apiUp = healthQuery.data?.status === 'ok'
+  const latestEmailStatus = notificationsQuery.data?.[0]?.status
+  const emailTone =
+    latestEmailStatus === 'failed' || latestEmailStatus === 'error'
+      ? 'text-[var(--danger)]'
+      : latestEmailStatus === 'sent' || latestEmailStatus === 'delivered'
+        ? 'text-[var(--positive)]'
+        : 'text-[var(--muted)]'
   const latestRecs = latestBySymbol(recsQuery.data ?? [])
   const actionable = latestRecs.filter((r) => r.action !== 'HOLD')
   const chartData =
@@ -152,9 +166,10 @@ function App() {
                   ? t('apiChecking')
                   : t('apiOffline')}
             </span>
-            <span className="rounded-full border border-[var(--border)] px-3 py-1 text-[var(--muted)]">
-              {t('emailPrefix')}:{' '}
-              {notificationsQuery.data?.[0]?.status ?? t('emailNone')}
+            <span
+              className={`rounded-full border border-[var(--border)] px-3 py-1 ${emailTone}`}
+            >
+              {t('emailPrefix')}: {latestEmailStatus ?? t('emailNone')}
             </span>
           </div>
         </div>
@@ -279,27 +294,23 @@ function App() {
               <p className="text-[var(--danger)]">{t('recommendationsError')}</p>
             )}
 
+            {!recsQuery.isLoading &&
+              latestRecs.length > 0 &&
+              actionable.length === 0 && (
+                <p className="mb-4 rounded-lg border border-[var(--border)] bg-black/15 px-3 py-2 text-sm text-[var(--muted)]">
+                  {t('allHoldSummary')}
+                </p>
+              )}
+
             <ul className="divide-y divide-[var(--border)]">
               {latestRecs.map((rec) => (
-                <li key={rec.id} className="py-3">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="font-medium tracking-wide">
-                        {rec.symbol}{' '}
-                        <span className={`text-sm ${actionTone[rec.action] ?? ''}`}>
-                          {rec.action}
-                        </span>
-                      </p>
-                      <p className="mt-1 max-w-xl text-sm text-[var(--muted)]">
-                        {rec.explanation?.thesis ?? t('noExplanation')}
-                      </p>
-                    </div>
-                    <div className="text-right text-sm text-[var(--muted)]">
-                      <p>{Number(rec.size_pct ?? 0).toFixed(2)}%</p>
-                      <p>{money(rec.size_amount_usd)}</p>
-                    </div>
-                  </div>
-                </li>
+                <RecommendationRow
+                  key={rec.id}
+                  rec={rec}
+                  locale={locale}
+                  t={t}
+                  showSize={rec.action !== 'HOLD'}
+                />
               ))}
               {!recsQuery.isLoading && latestRecs.length === 0 && (
                 <li className="py-6 text-sm text-[var(--muted)]">{t('noRuns')}</li>
@@ -406,6 +417,123 @@ function Stat({
       <p className="mt-2 text-xl font-semibold">{value}</p>
       {hint ? <p className="mt-1 text-xs text-[var(--muted)]">{hint}</p> : null}
     </div>
+  )
+}
+
+function MetricChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="rounded-md border border-[var(--border)] px-2 py-1 text-xs text-[var(--muted)]">
+      <span className="text-[var(--text)]/70">{label}</span> {value}
+    </span>
+  )
+}
+
+function RecommendationRow({
+  rec,
+  locale,
+  t,
+  showSize,
+}: {
+  rec: Recommendation
+  locale: Locale
+  t: (key: TranslationKey) => string
+  showSize: boolean
+}) {
+  const metrics = parseThesisMetrics(rec.explanation?.thesis)
+  const summary = humanThesis(rec, locale)
+  const reasons = metrics.reasonKeys
+    .map((key) => reasonLabel(key, locale))
+    .filter((label): label is string => Boolean(label))
+  const returnLabel = formatPctRatio(metrics.return20d)
+  const volLabel = formatPctRatio(metrics.vol20d)
+  const confidence =
+    rec.confidence === null || rec.confidence === undefined
+      ? null
+      : `${(Number(rec.confidence) * 100).toFixed(0)}%`
+
+  const chips: Array<{ label: string; value: string }> = []
+  if (metrics.score !== undefined) {
+    chips.push({ label: t('metricScore'), value: metrics.score.toFixed(3) })
+  }
+  if (metrics.weightPct !== undefined) {
+    chips.push({ label: t('metricWeight'), value: `${metrics.weightPct.toFixed(1)}%` })
+  }
+  if (metrics.capPct !== undefined) {
+    chips.push({ label: t('metricCap'), value: `${metrics.capPct.toFixed(0)}%` })
+  }
+  if (returnLabel) chips.push({ label: t('metricReturn20d'), value: returnLabel })
+  if (volLabel) chips.push({ label: t('metricVol20d'), value: volLabel })
+  if (confidence) chips.push({ label: t('metricConfidence'), value: confidence })
+
+  const hasDetails =
+    Boolean(rec.explanation?.risks) ||
+    Boolean(rec.explanation?.invalidation) ||
+    Boolean(rec.explanation?.thesis)
+
+  return (
+    <li className="py-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="font-medium tracking-wide">
+            {rec.symbol}{' '}
+            <span className={`text-sm ${actionTone[rec.action] ?? ''}`}>
+              {actionLabel(rec.action, locale)}
+            </span>
+          </p>
+          <p className="mt-1 max-w-xl text-sm leading-relaxed text-[var(--text)]/85">
+            {summary || t('noExplanation')}
+          </p>
+          {reasons.length > 0 && (
+            <p className="mt-1 text-xs text-[var(--muted)]">{reasons.join(' · ')}</p>
+          )}
+          {chips.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {chips.map((chip) => (
+                <MetricChip key={chip.label} label={chip.label} value={chip.value} />
+              ))}
+            </div>
+          )}
+          {hasDetails && (
+            <details className="mt-2 group">
+              <summary className="cursor-pointer list-none text-xs text-[var(--muted)] underline-offset-2 hover:text-[var(--text)] hover:underline [&::-webkit-details-marker]:hidden">
+                <span className="group-open:hidden">{t('showDetails')}</span>
+                <span className="hidden group-open:inline">{t('hideDetails')}</span>
+              </summary>
+              <div className="mt-2 space-y-2 rounded-lg border border-[var(--border)] bg-black/15 p-3 text-xs text-[var(--muted)]">
+                {rec.explanation?.risks && (
+                  <p>
+                    <span className="text-[var(--text)]/70">{t('risksLabel')}: </span>
+                    {rec.explanation.risks}
+                  </p>
+                )}
+                {rec.explanation?.invalidation && (
+                  <p>
+                    <span className="text-[var(--text)]/70">{t('invalidationLabel')}: </span>
+                    {rec.explanation.invalidation}
+                  </p>
+                )}
+                {rec.explanation?.thesis && (
+                  <p className="whitespace-pre-wrap break-words">
+                    <span className="text-[var(--text)]/70">{t('rawThesisLabel')}: </span>
+                    {rec.explanation.thesis}
+                  </p>
+                )}
+              </div>
+            </details>
+          )}
+        </div>
+        <div className="text-right text-sm text-[var(--muted)]">
+          {showSize ? (
+            <>
+              <p className="text-[var(--text)]">{Number(rec.size_pct ?? 0).toFixed(2)}%</p>
+              <p>{money(rec.size_amount_usd)}</p>
+            </>
+          ) : (
+            <p className="text-xs uppercase tracking-[0.12em]">—</p>
+          )}
+        </div>
+      </div>
+    </li>
   )
 }
 

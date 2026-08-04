@@ -10,13 +10,62 @@ from app.agents.context import AdvisoryContext
 from app.core.config import Settings
 
 
+_ACTION_PHRASE = {
+    "HOLD": "Mantener",
+    "BUY": "Comprar",
+    "INCREASE": "Aumentar",
+    "SELL": "Vender",
+    "REDUCE": "Reducir",
+}
+
+_REASON_PHRASE = {
+    "no_edge_hold": "no hay ventaja clara para mover la posición",
+    "momentum_and_trend_support_entry": "el momentum y la tendencia apoyan la entrada",
+    "weak_momentum_suggests_trim": "el momentum débil sugiere recortar",
+    "leveraged_blocked_by_regime_or_profile": (
+        "el ETF apalancado queda bloqueado por el régimen de riesgo o el perfil"
+    ),
+}
+
+
+def _human_reason(rationale_points: list[str]) -> str:
+    for point in rationale_points:
+        if point in _REASON_PHRASE:
+            return _REASON_PHRASE[point]
+    return "la señal combinada no justifica un cambio"
+
+
+def _fmt_pct_ratio(value: object | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    pct = number * 100.0 if abs(number) <= 1.5 else number
+    return f"{pct:.1f}%"
+
+
 def _template_explanation(draft: RecommendationDraft, ctx: AdvisoryContext) -> ExplanationDraft:
     feat = ctx.etf_features.get(draft.symbol, {})
-    thesis = (
-        f"Recomendación {draft.action} para {draft.symbol}. "
-        f"Motivos: {'; '.join(draft.rationale_points)}. "
-        f"Retorno 20d={feat.get('return_20d')} | vol 20d={feat.get('volatility_20d_ann')}."
-    )
+    action_phrase = _ACTION_PHRASE.get(draft.action, draft.action)
+    reason = _human_reason(draft.rationale_points)
+    ret = _fmt_pct_ratio(feat.get("return_20d"))
+    vol = _fmt_pct_ratio(feat.get("volatility_20d_ann"))
+
+    market_bits: list[str] = []
+    if ret is not None:
+        market_bits.append(f"retorno 20d {ret}")
+    if vol is not None:
+        market_bits.append(f"volatilidad 20d {vol}")
+    market = f" Contexto: {', '.join(market_bits)}." if market_bits else ""
+
+    thesis = f"{action_phrase} {draft.symbol}: {reason}.{market}"
+    # Keep machine keys for UI parsers / audits without polluting the main sentence.
+    machine = " · ".join(draft.rationale_points)
+    if machine:
+        thesis = f"{thesis} [{machine}]"
+
     risks = (
         "Riesgo de mercado, posible divergencia FX USD/COP, y para apalancados "
         "(SOXL/TQQQ) decay por volatilidad. Esto es apoyo a decisión personal, no asesoría certificada."
@@ -80,9 +129,10 @@ def run_explanation_agent(
     for draft in drafts:
         expl = _template_explanation(draft, ctx)
         if polish_with_llm and draft.action != "HOLD":
-            polished = _try_llm_polish(expl.thesis, settings)
-            if polished != expl.thesis:
-                expl.thesis = polished
+            human, sep, machine = expl.thesis.partition(" [")
+            polished = _try_llm_polish(human, settings)
+            if polished != human:
+                expl.thesis = f"{polished} [{machine}" if sep else polished
             else:
                 warnings.append("llm_unavailable_template_fallback")
         explanations.append(expl)
