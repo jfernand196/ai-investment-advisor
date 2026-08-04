@@ -131,6 +131,9 @@ function App() {
           <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">
             AI Investment Advisor
           </h1>
+          <p className="text-sm tracking-wide text-[var(--muted)]">
+            por <span className="text-[var(--text)]">Juan Fernando Buitrago</span>
+          </p>
           <p className="max-w-2xl text-[var(--muted)]">
             Recomendaciones diarias sobre ETFs US, con contexto USD/COP y guardrails de riesgo.
           </p>
