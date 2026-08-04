@@ -1,0 +1,46 @@
+name: Daily Advisory
+
+on:
+  schedule:
+    # ~7:00 America/Bogota (UTC-5) on weekdays => 12:00 UTC
+    - cron: "0 12 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  run-daily:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake + ingest market data
+        env:
+          API_URL: ${{ secrets.ADVISORY_API_URL }}
+          API_KEY: ${{ secrets.ADVISORY_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${API_URL:-}" ] || [ -z "${API_KEY:-}" ]; then
+            echo "Missing ADVISORY_API_URL or ADVISORY_API_KEY secrets"
+            exit 1
+          fi
+          BASE="${API_URL%/}"
+
+          echo "Health check..."
+          for i in 1 2 3 4 5; do
+            if curl -fsS "$BASE/api/v1/health/live"; then
+              break
+            fi
+            echo "Waiting for API wake ($i)..."
+            sleep 15
+          done
+
+          echo "Ingest..."
+          curl -fsS -X POST "$BASE/api/v1/market/ingest" \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: $API_KEY" \
+            -d '{"lookback_days": 120}'
+
+          echo
+          echo "Advisory run + email..."
+          curl -fsS -X POST "$BASE/api/v1/advisory/runs" \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: $API_KEY" \
+            -d '{"trigger":"scheduled","notify_email":true}'
+          echo
